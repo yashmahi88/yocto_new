@@ -17,27 +17,41 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v3
         with:
-          fetch-depth: 0  
+          fetch-depth: 0
 
-      - name: Determine changed Yocto files
-        id: changes
+
+      - name: Determine upload mode
+        id: mode
         run: |
+          EXIST=$(mc --insecure ls local/test1/yocto-files 2>/dev/null | head -1 || true)
+          if [ -z "$EXIST" ]; then
+            echo "mode=full" >> $GITHUB_OUTPUT
+          else
+            echo "mode=incremental" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Determine Yocto files
+        id: files
+        run: |
+          if [ "${{ steps.mode.outputs.mode }}" = "full" ]; then
+            FILES=$(git ls-files | grep -E '\.(bb|bbappend|conf|inc|bbclass)$' || true)
+          else
             BEFORE=${{ github.event.before }}
             AFTER=${{ github.sha }}
-  
-            # Try diff; if it fails or yields no output, fall back to listing all Yocto files
             CHANGED=$(git diff --name-only "$BEFORE" "$AFTER" | grep -E '\.(bb|bbappend|conf|inc|bbclass)$' 2>/dev/null) || true
             if [ -z "$CHANGED" ]; then
-              CHANGED=$(git ls-files | grep -E '\.(bb|bbappend|conf|inc|bbclass)$' || true)
+              FILES=$(git ls-files | grep -E '\.(bb|bbappend|conf|inc|bbclass)$' || true)
+            else
+              FILES="$CHANGED"
             fi
-  
-            echo "changed=$CHANGED" >> $GITHUB_OUTPUT
-  
-      - name: Upload changed files to MinIO
-        if: steps.changes.outputs.changed != ''
+          fi
+          echo "files=$FILES" >> $GITHUB_OUTPUT
+
+      - name: Upload Yocto files to MinIO
+        if: steps.files.outputs.files != ''
         run: |
-            for f in ${{ steps.changes.outputs.changed }}; do
+            for f in ${{ steps.files.outputs.files }}; do
               DEST="test1/yocto-files/$(dirname "$f")"
-              mc mb --ignore-existing local/${DEST} --insecure
-              mc cp "$f" "local/${DEST}/" --insecure
+              mc --insecure mb --ignore-existing local/${DEST}
+              mc --insecure cp "$f" "local/${DEST}/"
             done
