@@ -12,48 +12,82 @@ on:
 
 jobs:
   sync-yocto-files:
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - name: Checkout repository
+        uses: actions/checkout@v3
         with:
           fetch-depth: 0
 
-
-      - name: Determine Yocto files list
-        id: yocto
+      - name: Force full upload for first run
+        id: mode
         run: |
-          BEFORE=${{ github.event.before }}
-          AFTER=${{ github.sha }}
-
-          if [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
-            # True first run: list all Yocto files
-            FILES=$(git ls-files | grep -E '\.(bb|bbappend|conf|inc|bbclass)$' || true)
+          # Create a marker file to track if we've done full upload
+          MARKER_EXISTS=$(mc --insecure ls local/test1/yocto-files/.full-upload-complete 2>/dev/null || true)
+          
+          if [ -z "$MARKER_EXISTS" ]; then
             echo "mode=full" >> $GITHUB_OUTPUT
+            echo "First run detected - will upload ALL Yocto files"
           else
-            # Subsequent runs: only changed files
-            CHANGED=$(git diff --name-only "$BEFORE" "$AFTER" \
-              | grep -E '\.(bb|bbappend|conf|inc|bbclass)$' 2>/dev/null) || true
-            if [ -z "$CHANGED" ]; then
-              FILES=$(git ls-files | grep -E '\.(bb|bbappend|conf|inc|bbclass)$' || true)
-              echo "mode=full" >> $GITHUB_OUTPUT
-            else
-              FILES="$CHANGED"
-              echo "mode=incremental" >> $GITHUB_OUTPUT
-            fi
+            echo "mode=incremental" >> $GITHUB_OUTPUT
+            echo "Subsequent run - will upload only changed files"
           fi
 
-          echo "files=$FILES" >> $GITHUB_OUTPUT
+      - name: Determine Yocto files
+        id: files
+        run: |
+          if [ "${{ steps.mode.outputs.mode }}" = "full" ]; then
+            echo "Listing ALL Yocto files for full upload..."
+            FILES=$(git ls-files | grep -E '\.(bb|bbappend|conf|inc|bbclass)$' || true)
+            echo "Found files:"
+            echo "$FILES"
+          else
+            echo "Listing only CHANGED Yocto files..."
+            BEFORE=${{ github.event.before }}
+            AFTER=${{ github.sha }}
+            CHANGED=$(git diff --name-only "$BEFORE" "$AFTER" | grep -E '\.(bb|bbappend|conf|inc|bbclass)$' 2>/dev/null) || true
+            if [ -z "$CHANGED" ]; then
+              echo "No changed Yocto files found, uploading all as fallback"
+              FILES=$(git ls-files | grep -E '\.(bb|bbappend|conf|inc|bbclass)$' || true)
+            else
+              FILES="$CHANGED"
+              echo "Changed files:"
+              echo "$FILES"
+            fi
+          fi
+          
+          # Convert multi-line to space-separated for GitHub Actions
+          FILES_SINGLE_LINE=$(echo "$FILES" | tr '\n' ' ')
+          echo "files=$FILES_SINGLE_LINE" >> $GITHUB_OUTPUT
 
       - name: Upload Yocto files to MinIO
-        if: steps.yocto.outputs.files != ''
+        if: steps.files.outputs.files != ''
         run: |
-          for f in ${{ steps.yocto.outputs.files }}; do
-            DEST="test1/yocto-files/$(dirname "$f")"
-            mc --insecure mb --ignore-existing local/${DEST}
-            mc --insecure cp "$f" "local/${DEST}/"
+          echo "Uploading files in ${{ steps.mode.outputs.mode }} mode..."
+          
+          # Convert space-separated back to array
+          FILES="${{ steps.files.outputs.files }}"
+          
+          for f in $FILES; do
+            if [ -f "$f" ]; then
+              DEST="test1/yocto-files/$(dirname "$f")"
+              echo "Uploading: $f -> local/${DEST}/"
+              mc --insecure mb --ignore-existing local/${DEST}
+              mc --insecure cp "$f" "local/${DEST}/"
+            else
+              echo "Warning: File not found: $f"
+            fi
           done
+
+      - name: Mark full upload complete
+        if: steps.mode.outputs.mode == 'full' && steps.files.outputs.files != ''
+        run: |
+          echo "Marking full upload as complete..."
+          echo "Full upload completed on $(date)" | mc --insecure pipe local/test1/yocto-files/.full-upload-complete
 
 
       - name: Done
         run: |
-          echo "Upload complete (mode=${{ steps.yocto.outputs.mode }})."
+          echo "Upload complete!"
+          echo "Mode: ${{ steps.mode.outputs.mode }}"
+          echo "Files processed: ${{ steps.files.outputs.files }}"
