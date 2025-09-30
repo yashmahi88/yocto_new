@@ -16,26 +16,28 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
+        with:
+          fetch-depth: 0  
 
       - name: Determine changed Yocto files
         id: changes
         run: |
-          BEFORE=${{ github.event.before }}
-          AFTER=${{ github.sha }}
-          if [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
-            # First run: list all Yocto files
-            CHANGED=$(git ls-files | grep -E '\.(bb|bbappend|conf|inc|bbclass)$' || true)
-          else
-            CHANGED=$(git diff --name-only "$BEFORE" "$AFTER" \
-              | grep -E '\.(bb|bbappend|conf|inc|bbclass)$' || true)
-          fi
-          echo "changed=$CHANGED" >> $GITHUB_OUTPUT
-
+            BEFORE=${{ github.event.before }}
+            AFTER=${{ github.sha }}
+  
+            # Try diff; if it fails or yields no output, fall back to listing all Yocto files
+            CHANGED=$(git diff --name-only "$BEFORE" "$AFTER" | grep -E '\.(bb|bbappend|conf|inc|bbclass)$' 2>/dev/null) || true
+            if [ -z "$CHANGED" ]; then
+              CHANGED=$(git ls-files | grep -E '\.(bb|bbappend|conf|inc|bbclass)$' || true)
+            fi
+  
+            echo "changed=$CHANGED" >> $GITHUB_OUTPUT
+  
       - name: Upload changed files to MinIO
-        if: steps.changes.outputs.files != ''
+        if: steps.changes.outputs.changed != ''
         run: |
-          for f in ${{ steps.changes.outputs.files }}; do
-            DEST="test1/yocto-files/$(dirname "$f")"
-            mc mb --ignore-existing local/${DEST}
-            mc cp "$f" "local/${DEST}/"
-          done
+            for f in ${{ steps.changes.outputs.changed }}; do
+              DEST="test1/yocto-files/$(dirname "$f")"
+              mc mb --ignore-existing local/${DEST}
+              mc cp "$f" "local/${DEST}/"
+            done
