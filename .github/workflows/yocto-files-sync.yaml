@@ -12,7 +12,7 @@ on:
 
 jobs:
   sync-yocto-files:
-    runs-on: [self-hosted, azure-vm]
+    runs-on: self-hosted
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
