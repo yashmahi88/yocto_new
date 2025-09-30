@@ -20,9 +20,16 @@ jobs:
       - name: Determine changed Yocto files
         id: changes
         run: |
-          CHANGED=$(git diff --name-only ${{ github.event.before }} ${{ github.sha }} \
-            | grep -E '\.(bb|bbappend|conf|inc|bbclass)$' || true)
-          echo "::set-output name=files::$CHANGED"
+          BEFORE=${{ github.event.before }}
+          AFTER=${{ github.sha }}
+          if [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
+            # First run: list all Yocto files
+            CHANGED=$(git ls-files | grep -E '\.(bb|bbappend|conf|inc|bbclass)$' || true)
+          else
+            CHANGED=$(git diff --name-only "$BEFORE" "$AFTER" \
+              | grep -E '\.(bb|bbappend|conf|inc|bbclass)$' || true)
+          fi
+          echo "changed=$CHANGED" >> $GITHUB_OUTPUT
 
       - name: Upload changed files to MinIO
         if: steps.changes.outputs.files != ''
