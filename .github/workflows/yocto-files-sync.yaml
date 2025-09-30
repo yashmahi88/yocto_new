@@ -1,0 +1,34 @@
+name: Yocto Files Sync
+
+on:
+  push:
+    paths:
+      - '**/*.bb'
+      - '**/*.bbappend'
+      - '**/*.conf'
+      - '**/layer.conf'
+      - '**/*.inc'
+      - '**/*.bbclass'
+
+jobs:
+  sync-yocto-files:
+    runs-on: [self-hosted, azure-vm]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Determine changed Yocto files
+        id: changes
+        run: |
+          CHANGED=$(git diff --name-only ${{ github.event.before }} ${{ github.sha }} \
+            | grep -E '\.(bb|bbappend|conf|inc|bbclass)$' || true)
+          echo "::set-output name=files::$CHANGED"
+
+      - name: Upload changed files to MinIO
+        if: steps.changes.outputs.files != ''
+        run: |
+          for f in ${{ steps.changes.outputs.files }}; do
+            DEST="test1/yocto-files/$(dirname "$f")"
+            mc mb --ignore-existing local/${DEST}
+            mc cp "$f" "local/${DEST}/"
+          done
