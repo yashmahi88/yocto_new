@@ -38,6 +38,6 @@ jobs:
         run: |
             for f in ${{ steps.changes.outputs.changed }}; do
               DEST="test1/yocto-files/$(dirname "$f")"
-              mc mb --ignore-existing local/${DEST}
-              mc cp "$f" "local/${DEST}/"
+              mc mb --ignore-existing local/${DEST} --insecure
+              mc cp "$f" "local/${DEST}/" --insecure
             done
