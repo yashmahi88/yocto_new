@@ -14,44 +14,46 @@ jobs:
   sync-yocto-files:
     runs-on: self-hosted
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v3
+      - uses: actions/checkout@v3
         with:
           fetch-depth: 0
 
 
-      - name: Determine upload mode
-        id: mode
+      - name: Determine Yocto files list
+        id: yocto
         run: |
-          EXIST=$(mc --insecure ls local/test1/yocto-files 2>/dev/null | head -1 || true)
-          if [ -z "$EXIST" ]; then
+          BEFORE=${{ github.event.before }}
+          AFTER=${{ github.sha }}
+
+          if [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
+            # True first run: list all Yocto files
+            FILES=$(git ls-files | grep -E '\.(bb|bbappend|conf|inc|bbclass)$' || true)
             echo "mode=full" >> $GITHUB_OUTPUT
           else
-            echo "mode=incremental" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Determine Yocto files
-        id: files
-        run: |
-          if [ "${{ steps.mode.outputs.mode }}" = "full" ]; then
-            FILES=$(git ls-files | grep -E '\.(bb|bbappend|conf|inc|bbclass)$' || true)
-          else
-            BEFORE=${{ github.event.before }}
-            AFTER=${{ github.sha }}
-            CHANGED=$(git diff --name-only "$BEFORE" "$AFTER" | grep -E '\.(bb|bbappend|conf|inc|bbclass)$' 2>/dev/null) || true
+            # Subsequent runs: only changed files
+            CHANGED=$(git diff --name-only "$BEFORE" "$AFTER" \
+              | grep -E '\.(bb|bbappend|conf|inc|bbclass)$' 2>/dev/null) || true
             if [ -z "$CHANGED" ]; then
               FILES=$(git ls-files | grep -E '\.(bb|bbappend|conf|inc|bbclass)$' || true)
+              echo "mode=full" >> $GITHUB_OUTPUT
             else
               FILES="$CHANGED"
+              echo "mode=incremental" >> $GITHUB_OUTPUT
             fi
           fi
+
           echo "files=$FILES" >> $GITHUB_OUTPUT
 
       - name: Upload Yocto files to MinIO
-        if: steps.files.outputs.files != ''
+        if: steps.yocto.outputs.files != ''
         run: |
-            for f in ${{ steps.files.outputs.files }}; do
-              DEST="test1/yocto-files/$(dirname "$f")"
-              mc --insecure mb --ignore-existing local/${DEST}
-              mc --insecure cp "$f" "local/${DEST}/"
-            done
+          for f in ${{ steps.yocto.outputs.files }}; do
+            DEST="test1/yocto-files/$(dirname "$f")"
+            mc --insecure mb --ignore-existing local/${DEST}
+            mc --insecure cp "$f" "local/${DEST}/"
+          done
+
+
+      - name: Done
+        run: |
+          echo "Upload complete (mode=${{ steps.yocto.outputs.mode }})."
