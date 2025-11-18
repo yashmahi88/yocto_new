@@ -15,17 +15,20 @@ properties([
         )
     ]),
     parameters([
-        string(name: 'VECTORSTORE', defaultValue: '/home/azureuser/rag-system/modular_code_base/vectorstore'),
-        string(name: 'MARKER_FILE', defaultValue: '.yocto-full-sync-complete')
+        string(name: 'RAG_BASE', defaultValue: '/home/azureuser/rag-system'),
+        string(name: 'VECTORSTORE_DIR', defaultValue: 'modular_code_base/vectorstore'),
+        string(name: 'PYTHON_ENV', defaultValue: '/home/azureuser/rag-system/venv')
     ])
 ])
 
 pipeline {
-    agent any
+    agent { label 'self-hosted' }
     
     environment {
-        VECTORSTORE = "${params.VECTORSTORE}"
-        MARKER = "${params.VECTORSTORE}/${params.MARKER_FILE}"
+        RAG_BASE = "${params.RAG_BASE}"
+        VECTORSTORE = "${params.RAG_BASE}/${params.VECTORSTORE_DIR}"
+        TEMP_DOCS = "${VECTORSTORE}/yocto-staging"
+        PYTHON_ENV = "${params.PYTHON_ENV}"
         PATTERN = '\\.(bb|bbappend|conf|inc|bbclass)$'
     }
     
@@ -42,76 +45,188 @@ pipeline {
             }
         }
         
-        stage('Detect Mode') {
+        stage('Find Changed Files') {
             steps {
                 script {
-                    def markerExists = sh(script: "test -f '${MARKER}' && echo 'yes' || echo 'no'", returnStdout: true).trim()
-                    env.MODE = markerExists == 'yes' ? 'incremental' : 'full'
-                    echo "→ Mode: ${env.MODE}"
-                }
-            }
-        }
-        
-        stage('Find Files') {
-            steps {
-                script {
-                    if (env.MODE == 'full') {
-                        env.FILES = sh(script: "git ls-files | grep -E '${PATTERN}' || true", returnStdout: true).trim()
-                    } else {
-                        def prev = env.GIT_PREVIOUS_COMMIT ?: 'HEAD~1'
-                        def changed = sh(script: "git diff --name-only ${prev} ${env.GIT_COMMIT} | grep -E '${PATTERN}' || true", returnStdout: true).trim()
-                        env.FILES = changed ?: sh(script: "git ls-files | grep -E '${PATTERN}' || true", returnStdout: true).trim()
-                    }
+                    def prev = env.GIT_PREVIOUS_COMMIT ?: 'HEAD~1'
+                    env.FILES = sh(script: "git diff --name-only ${prev} ${env.GIT_COMMIT} | grep -E '${PATTERN}' || true", returnStdout: true).trim()
                     
                     def count = env.FILES ? env.FILES.split('\n').size() : 0
-                    echo "→ Files: ${count}"
                     
                     if (count == 0) {
-                        echo "ℹ No Yocto files to sync"
-                        currentBuild.result = 'SUCCESS'
-                        return
+                        echo "ℹ No Yocto files changed"
+                        currentBuild.result = 'NOT_BUILT'
+                        error("No Yocto files to process")
                     }
+                    
+                    echo "→ Changed files: ${count}"
                 }
             }
         }
         
-        stage('Sync') {
-            when { expression { env.FILES?.trim() } }
+        stage('Stage Files') {
             steps {
+                sh "rm -rf '${TEMP_DOCS}' && mkdir -p '${TEMP_DOCS}'"
+                
                 script {
-                    def synced = 0
-                    def failed = 0
-                    
+                    def staged = 0
                     env.FILES.split('\n').each { file ->
                         if (file?.trim() && fileExists(file)) {
-                            def destDir = "${VECTORSTORE}/yocto-files/${file.contains('/') ? file.substring(0, file.lastIndexOf('/')) : '.'}"
-                            try {
-                                sh "mkdir -p '${destDir}'"
-                                sh "cp '${file}' '${destDir}/'"
-                                synced++
-                            } catch (e) {
-                                echo "✗ ${file}"
-                                failed++
-                            }
+                            sh "cp '${file}' '${TEMP_DOCS}/'"
+                            staged++
                         }
                     }
-                    
-                    echo "→ Synced: ${synced}, Failed: ${failed}"
-                    if (synced == 0 && failed > 0) error("All syncs failed")
+                    echo "→ Staged: ${staged} files"
                 }
             }
         }
         
-        stage('Mark Complete') {
-            when { expression { env.MODE == 'full' && env.FILES?.trim() } }
+        stage('Check Vectorstore') {
             steps {
-                sh "echo 'Full sync: \$(date)' > '${MARKER}'"
+                script {
+                    def exists = sh(script: "test -f '${VECTORSTORE}/index.faiss' && echo 'yes' || echo 'no'", returnStdout: true).trim()
+                    env.VECTORSTORE_EXISTS = exists
+                    
+                    if (exists == 'yes') {
+                        def size = sh(script: "wc -c < '${VECTORSTORE}/index.faiss'", returnStdout: true).trim()
+                        echo "✓ Existing vectorstore found: ${size} bytes"
+                        echo "→ Will update existing database"
+                    } else {
+                        echo "ℹ No vectorstore found"
+                        echo "→ Will create new database"
+                    }
+                }
+            }
+        }
+        
+        stage('Update Vectorstore') {
+            steps {
+                sh """
+                    cd ${RAG_BASE}
+                    . ${PYTHON_ENV}/bin/activate
+                    
+                    python3 << 'PYTHON_SCRIPT'
+import os
+import glob
+from langchain_community.document_loaders import TextLoader
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_community.embeddings import OllamaEmbeddings
+from langchain_community.vectorstores import FAISS
+
+# Configuration
+staging_dir = '${TEMP_DOCS}'
+vectorstore_path = '${VECTORSTORE}'
+vectorstore_exists = '${env.VECTORSTORE_EXISTS}' == 'yes'
+
+print(f"Staging directory: {staging_dir}")
+print(f"Vectorstore path: {vectorstore_path}")
+print(f"Vectorstore exists: {vectorstore_exists}")
+
+# Load new documents
+files = glob.glob(f'{staging_dir}/*')
+print(f"\\nFound {len(files)} files to process")
+
+if not files:
+    print("No files to process")
+    exit(0)
+
+documents = []
+for file_path in files:
+    try:
+        loader = TextLoader(file_path, autodetect_encoding=True)
+        docs = loader.load()
+        for doc in docs:
+            doc.metadata['source'] = os.path.basename(file_path)
+            doc.metadata['category'] = 'yocto'
+        documents.extend(docs)
+        print(f"✓ Loaded: {os.path.basename(file_path)}")
+    except Exception as e:
+        print(f"✗ Failed to load {file_path}: {e}")
+
+if not documents:
+    print("No documents loaded successfully")
+    exit(1)
+
+print(f"\\nTotal documents loaded: {len(documents)}")
+
+# Split documents
+text_splitter = RecursiveCharacterTextSplitter(
+    chunk_size=1000,
+    chunk_overlap=200,
+    length_function=len
+)
+texts = text_splitter.split_documents(documents)
+print(f"Split into {len(texts)} chunks")
+
+# Create embeddings
+print("\\nInitializing embeddings...")
+embeddings = OllamaEmbeddings(model='llama2')
+
+# Update or create vectorstore
+if vectorstore_exists:
+    print("\\nLoading existing vectorstore...")
+    vectorstore = FAISS.load_local(
+        vectorstore_path, 
+        embeddings, 
+        allow_dangerous_deserialization=True
+    )
+    old_count = vectorstore.index.ntotal
+    print(f"Existing vectors: {old_count}")
+    
+    print("Adding new documents to vectorstore...")
+    vectorstore.add_documents(texts)
+    new_count = vectorstore.index.ntotal
+    print(f"New vectors: {new_count}")
+    print(f"Added: {new_count - old_count} vectors")
+else:
+    print("\\nCreating new vectorstore...")
+    vectorstore = FAISS.from_documents(texts, embeddings)
+    print(f"Created with {vectorstore.index.ntotal} vectors")
+
+# Save vectorstore
+print("\\nSaving vectorstore...")
+vectorstore.save_local(vectorstore_path)
+print(f"✓ Saved to {vectorstore_path}")
+print(f"✓ Total vectors in database: {vectorstore.index.ntotal}")
+
+PYTHON_SCRIPT
+                """
+            }
+        }
+        
+        stage('Verify Update') {
+            steps {
+                sh """
+                    echo "→ Vectorstore files:"
+                    ls -lh ${VECTORSTORE}/*.{faiss,pkl} 2>/dev/null
+                    
+                    if [ -f "${VECTORSTORE}/index.faiss" ]; then
+                        SIZE=\$(wc -c < "${VECTORSTORE}/index.faiss")
+                        echo "✓ index.faiss: \${SIZE} bytes"
+                    else
+                        echo "✗ index.faiss not found!"
+                        exit 1
+                    fi
+                """
+            }
+        }
+        
+        stage('Cleanup') {
+            steps {
+                sh "rm -rf '${TEMP_DOCS}'"
             }
         }
     }
     
     post {
-        success { echo " ${env.MODE} sync: ${env.FILES?.split('\n')?.size() ?: 0} files" }
-        failure { echo " Sync failed" }
+        success {
+            script {
+                def count = env.FILES?.split('\n')?.size() ?: 0
+                def mode = env.VECTORSTORE_EXISTS == 'yes' ? 'Updated' : 'Created'
+                echo "✓ ${mode} vectorstore with ${count} new files"
+            }
+        }
+        failure { echo " Vectorstore update failed" }
+        always { sh "rm -rf '${TEMP_DOCS}' 2>/dev/null || true" }
     }
 }
