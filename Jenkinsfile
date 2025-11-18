@@ -22,7 +22,7 @@ properties([
 ])
 
 pipeline {
-    agent { label 'self-hosted' }
+    agent any
     
     environment {
         RAG_BASE = "${params.RAG_BASE}"
