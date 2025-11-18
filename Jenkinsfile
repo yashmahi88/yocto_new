@@ -37,21 +37,40 @@ pipeline {
         buildDiscarder(logRotator(numToKeepStr: '50'))
         timestamps()
         disableConcurrentBuilds()
-        quietPeriod(5)  // Wait 5 seconds before starting build
+        quietPeriod(5)
     }
     
     stages {
         stage('Checkout') {
             steps {
                 checkout scm
+                script {
+                    // Store current commit for next build
+                    env.GIT_COMMIT = sh(script: 'git rev-parse HEAD', returnStdout: true).trim()
+                    echo "→ Current commit: ${env.GIT_COMMIT}"
+                }
             }
         }
         
         stage('Find Changed Files') {
             steps {
                 script {
-                    def prev = env.GIT_PREVIOUS_COMMIT ?: 'HEAD~1'
-                    env.FILES = sh(script: "git diff --name-only ${prev} ${env.GIT_COMMIT} | grep -E '${PATTERN}' || true", returnStdout: true).trim()
+                    def prev = env.GIT_PREVIOUS_COMMIT ?: env.GIT_PREVIOUS_SUCCESSFUL_COMMIT ?: 'HEAD~1'
+                    def current = env.GIT_COMMIT
+                    
+                    echo "→ Comparing: ${prev} → ${current}"
+                    
+                    // Handle first run or when prev commit doesn't exist
+                    def filesCmd = """
+                        if git rev-parse ${prev} >/dev/null 2>&1; then
+                            git diff --name-only ${prev} ${current}
+                        else
+                            git ls-files
+                        fi
+                    """
+                    
+                    def allFiles = sh(script: filesCmd, returnStdout: true).trim()
+                    env.FILES = sh(script: "echo '${allFiles}' | grep -E '${PATTERN}' || true", returnStdout: true).trim()
                     
                     def count = env.FILES ? env.FILES.split('\n').size() : 0
                     
@@ -77,7 +96,13 @@ pipeline {
                     def staged = 0
                     env.FILES.split('\n').each { file ->
                         if (file?.trim() && fileExists(file)) {
-                            sh "cp '${file}' '${TEMP_DOCS}/'"
+                            def destDir = "${TEMP_DOCS}"
+                            // Preserve directory structure for files in subdirectories
+                            if (file.contains('/')) {
+                                destDir = "${TEMP_DOCS}/" + file.substring(0, file.lastIndexOf('/'))
+                                sh "mkdir -p '${destDir}'"
+                            }
+                            sh "cp '${file}' '${destDir}/'"
                             staged++
                         }
                     }
@@ -127,8 +152,12 @@ print(f"Staging directory: {staging_dir}")
 print(f"Vectorstore path: {vectorstore_path}")
 print(f"Vectorstore exists: {vectorstore_exists}")
 
-# Load new documents
-files = glob.glob(f'{staging_dir}/*')
+# Load new documents recursively
+files = []
+for root, dirs, filenames in os.walk(staging_dir):
+    for filename in filenames:
+        files.append(os.path.join(root, filename))
+
 print(f"\\nFound {len(files)} files to process")
 
 if not files:
@@ -141,10 +170,10 @@ for file_path in files:
         loader = TextLoader(file_path, autodetect_encoding=True)
         docs = loader.load()
         for doc in docs:
-            doc.metadata['source'] = os.path.basename(file_path)
+            doc.metadata['source'] = os.path.relpath(file_path, staging_dir)
             doc.metadata['category'] = 'yocto'
         documents.extend(docs)
-        print(f"✓ Loaded: {os.path.basename(file_path)}")
+        print(f"✓ Loaded: {os.path.relpath(file_path, staging_dir)}")
     except Exception as e:
         print(f"✗ Failed to load {file_path}: {e}")
 
@@ -228,10 +257,10 @@ PYTHON_SCRIPT
             script {
                 def count = env.FILES?.split('\n')?.size() ?: 0
                 def mode = env.VECTORSTORE_EXISTS == 'yes' ? 'Updated' : 'Created'
-                echo " ${mode} vectorstore with ${count} new files"
+                echo "✓ ${mode} vectorstore with ${count} new files"
             }
         }
-        failure { echo " Vectorstore update failed" }
+        failure { echo "✗ Vectorstore update failed" }
         always { sh "rm -rf '${TEMP_DOCS}' 2>/dev/null || true" }
     }
 }
