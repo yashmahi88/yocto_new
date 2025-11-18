@@ -9,7 +9,7 @@ properties([
             causeString: 'Triggered by Yocto file changes',
             token: 'yocto-build-sync',
             regexpFilterText: '$commits_modified $commits_added',
-            regexpFilterExpression: '.*(\\.bb|\\.bbappend|\\.conf|\\.inc|\\.bbclass).*',
+            regexpFilterExpression: '.*(\\.bb|\\.bbappend|\\.conf|layer\\.conf|\\.inc|\\.bbclass).*',
             printContributedVariables: true,
             printPostContent: true
         )
@@ -29,13 +29,15 @@ pipeline {
         VECTORSTORE = "${params.RAG_BASE}/${params.VECTORSTORE_DIR}"
         TEMP_DOCS = "${VECTORSTORE}/yocto-staging"
         PYTHON_ENV = "${params.PYTHON_ENV}"
-        PATTERN = '\\.(bb|bbappend|conf|inc|bbclass)$'
+        PATTERN = '\\.(bb|bbappend|conf|inc|bbclass)$|layer\\.conf$'
     }
     
     options {
         skipDefaultCheckout()
         buildDiscarder(logRotator(numToKeepStr: '50'))
         timestamps()
+        disableConcurrentBuilds()
+        quietPeriod(5)  // Wait 5 seconds before starting build
     }
     
     stages {
@@ -60,6 +62,9 @@ pipeline {
                     }
                     
                     echo "→ Changed files: ${count}"
+                    env.FILES.split('\n').each { file ->
+                        if (file?.trim()) echo "  - ${file}"
+                    }
                 }
             }
         }
@@ -223,7 +228,7 @@ PYTHON_SCRIPT
             script {
                 def count = env.FILES?.split('\n')?.size() ?: 0
                 def mode = env.VECTORSTORE_EXISTS == 'yes' ? 'Updated' : 'Created'
-                echo "✓ ${mode} vectorstore with ${count} new files"
+                echo " ${mode} vectorstore with ${count} new files"
             }
         }
         failure { echo " Vectorstore update failed" }
