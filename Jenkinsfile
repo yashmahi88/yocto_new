@@ -17,7 +17,7 @@ properties([
     parameters([
         string(name: 'RAG_BASE', defaultValue: '/home/azureuser/rag-system'),
         string(name: 'VECTORSTORE_DIR', defaultValue: 'modular_code_base/vectorstore'),
-        string(name: 'PYTHON_ENV', defaultValue: '/home/azureuser/rag-system/venv')
+        string(name: 'PYTHON_ENV', defaultValue: '/home/azureuser/rag-system/rag_env')
     ])
 ])
 
