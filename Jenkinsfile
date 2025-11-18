@@ -194,7 +194,7 @@ print(f"Split into {len(texts)} chunks")
 
 # Create embeddings
 print("\\nInitializing embeddings...")
-embeddings = OllamaEmbeddings(model='llama2')
+embeddings = OllamaEmbeddings(model='nomic-embed-text:latest')
 
 # Update or create vectorstore
 if vectorstore_exists:
