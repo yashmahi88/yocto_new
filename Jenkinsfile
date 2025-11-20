@@ -1,3 +1,4 @@
+
 properties([
     pipelineTriggers([
         GenericTrigger(
@@ -69,7 +70,7 @@ pipeline {
                     }
                     
                     echo "Processing ${env.FILE_COUNT} Yocto files from ${prev} to ${env.GIT_COMMIT}"
-                    env.VECTORSTORE_EXISTS = fileExists("${VECTORSTORE}/index.faiss") ? 'true' : 'false'
+                    env.VECTORSTORE_EXISTS = fileExists("${VECTORSTORE}/index.faiss") ? 'True' : 'False'
                 }
             }
         }
@@ -104,7 +105,6 @@ pipeline {
                     python3 << 'EOF'
 import os
 import sys
-import glob
 from pathlib import Path
 from langchain_community.document_loaders import TextLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
@@ -198,7 +198,7 @@ EOF
     post {
         success {
             script {
-                def mode = env.VECTORSTORE_EXISTS == 'true' ? 'Updated' : 'Created'
+                def mode = env.VECTORSTORE_EXISTS == 'True' ? 'Updated' : 'Created'
                 echo "${mode} vectorstore with ${env.FILE_COUNT} Yocto files"
             }
         }
@@ -211,7 +211,6 @@ EOF
         }
     }
 }
-
 
 // properties([
 //     pipelineTriggers([
