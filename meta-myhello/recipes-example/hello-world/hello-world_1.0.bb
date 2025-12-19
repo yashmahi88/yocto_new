@@ -6,7 +6,7 @@ LIC_FILES_CHKSUM = "file://${COMMON_LICENSE_DIR}/MIT;md5=0835ade698e0bcf8506ecda
 PV = "0.3"
 # Specify the source files (our hello.c and Makefile from the 'files' subdirectory)
 SRC_URI = "file://hello.c \
-           file://Makefile" 
+           file://Makefile"
 
 # Where the source files will be extracted in the build directory
 S = "${WORKDIR}"
