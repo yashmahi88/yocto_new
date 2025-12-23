@@ -101,9 +101,9 @@ pipeline {
             steps {
                 sh """#!/bin/bash
                     set -euo pipefail
-                    source ${PYTHON_ENV}/bin/activate
                     
-                    python3 -c << 
+                    
+                    ${PYTHON_ENV}/bin/python3 << 'PYTHON_SCRIPT'
 import os
 import sys
 from pathlib import Path
@@ -157,6 +157,7 @@ else:
 
 vectorstore.save_local(vectorstore_path)
 print(f"Saved to {vectorstore_path}")
+PYTHON_SCRIPT
 
                 """
             }
