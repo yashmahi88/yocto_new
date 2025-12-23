@@ -3,12 +3,14 @@ properties([
     pipelineTriggers([
         GenericTrigger(
             genericVariables: [
-                [key: 'allfiles', value: '$.commits[*].[modified[*],added[*]]', expressionType: 'JSONPath', defaultValue: ''],
+                [key: 'commits_modified', value: '$.commits[*].modified[*]'],
+                [key: 'commits_added', value: '$.commits[*].added[*]'],
                 [key: 'ref', value: '$.ref']
+
             ],
             causeString: 'Triggered by Yocto file changes',
             token: 'yocto-build-sync',
-            regexpFilterText: '$allfiles',
+            regexpFilterText: '$commits_modified $commits_added',
             regexpFilterExpression: '.*(\\.bb|\\.bbappend|\\.conf|layer\\.conf|\\.inc|\\.bbclass).*',
             printContributedVariables: true,
             printPostContent: true
