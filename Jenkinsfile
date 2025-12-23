@@ -103,7 +103,7 @@ pipeline {
                     set -euo pipefail
                     source ${PYTHON_ENV}/bin/activate
                     
-                    python3 << 'EOF'
+                    python3 -c << 
 import os
 import sys
 from pathlib import Path
@@ -157,7 +157,7 @@ else:
 
 vectorstore.save_local(vectorstore_path)
 print(f"Saved to {vectorstore_path}")
-EOF
+
                 """
             }
         }
