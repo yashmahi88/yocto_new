@@ -3,8 +3,8 @@ properties([
     pipelineTriggers([
         GenericTrigger(
             genericVariables: [
-                [key: 'commits_modified', value: '$.commits[*].modified[*]'],
-                [key: 'commits_added', value: '$.commits[*].added[*]'],
+                [key: 'commits_modified', value: '$.commits[*].modified', regexpFilter: ''],
+                [key: 'commits_added', value: '$.commits[*].added', regexpFilter: ''],
                 [key: 'ref', value: '$.ref']
 
             ],
