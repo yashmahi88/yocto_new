@@ -3,7 +3,7 @@ SECTION = "examples"
 LICENSE = "MIT"
 LIC_FILES_CHKSUM = "file://${COMMON_LICENSE_DIR}/MIT;md5=0835ade698e0bcf8506ecda2f7b4f302"
 
-PV = "0.3" 
+PV = "0.3"
 # Specify the source files (our hello.c and Makefile from the 'files' subdirectory)
 SRC_URI = "file://hello.c \
            file://Makefile" 

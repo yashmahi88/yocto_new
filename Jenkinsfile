@@ -101,7 +101,6 @@ pipeline {
             steps {
                 sh """#!/bin/bash
                     set -euo pipefail
-                    cd ${RAG_BASE}
                     source ${PYTHON_ENV}/bin/activate
                     
                     python3 << 'EOF'
