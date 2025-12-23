@@ -128,66 +128,75 @@ pipeline {
                 sh """#!/bin/bash
                     set -euo pipefail
                     
+                    # Create temporary Python script
+                    cat > /tmp/update_vectorstore_\${BUILD_NUMBER}.py << 'PYEOF'
+        import os
+        import sys
+        from pathlib import Path
+        from langchain_community.document_loaders import TextLoader
+        from langchain.text_splitter import RecursiveCharacterTextSplitter
+        from langchain_community.embeddings import OllamaEmbeddings
+        from langchain_community.vectorstores import FAISS
+
+        staging_dir = sys.argv[1]
+        vectorstore_path = sys.argv[2]
+        vectorstore_exists = sys.argv[3] == 'True'
+
+        files = [f for f in Path(staging_dir).rglob('*') if f.is_file()]
+        print(f"Processing {len(files)} files")
+
+        if not files:
+            print("No files to process")
+            sys.exit(0)
+
+        documents = []
+        for file_path in files:
+            try:
+                loader = TextLoader(str(file_path), autodetect_encoding=True)
+                docs = loader.load()
+                for doc in docs:
+                    doc.metadata['source'] = str(file_path.relative_to(staging_dir))
+                    doc.metadata['category'] = 'yocto'
+                    doc.metadata['file_type'] = file_path.suffix
+                documents.extend(docs)
+            except Exception as e:
+                print(f"Failed to load {file_path}: {e}", file=sys.stderr)
+
+        if not documents:
+            print("No documents loaded")
+            sys.exit(1)
+
+        text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+        texts = text_splitter.split_documents(documents)
+        print(f"Split into {len(texts)} chunks")
+
+        embeddings = OllamaEmbeddings(model='nomic-embed-text:latest')
+
+        if vectorstore_exists:
+            vectorstore = FAISS.load_local(vectorstore_path, embeddings, allow_dangerous_deserialization=True)
+            old_count = vectorstore.index.ntotal
+            vectorstore.add_documents(texts)
+            print(f"Updated vectorstore: {old_count} -> {vectorstore.index.ntotal} vectors")
+        else:
+            vectorstore = FAISS.from_documents(texts, embeddings)
+            print(f"Created vectorstore with {vectorstore.index.ntotal} vectors")
+
+        vectorstore.save_local(vectorstore_path)
+        print(f"Saved to {vectorstore_path}")
+        PYEOF
+
+                    # Run with venv Python
+                    ${PYTHON_ENV}/bin/python3 /tmp/update_vectorstore_\${BUILD_NUMBER}.py \
+                        '${TEMP_DOCS}' \
+                        '${VECTORSTORE}' \
+                        '${env.VECTORSTORE_EXISTS}'
                     
-                    ${PYTHON_ENV}/bin/python3 << 'PYTHON_SCRIPT'
-import os
-import sys
-from pathlib import Path
-from langchain_community.document_loaders import TextLoader
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_community.embeddings import OllamaEmbeddings
-from langchain_community.vectorstores import FAISS
-
-staging_dir = '${TEMP_DOCS}'
-vectorstore_path = '${VECTORSTORE}'
-vectorstore_exists = ${env.VECTORSTORE_EXISTS}
-
-files = [f for f in Path(staging_dir).rglob('*') if f.is_file()]
-print(f"Processing {len(files)} files")
-
-if not files:
-    print("No files to process")
-    sys.exit(0)
-
-documents = []
-for file_path in files:
-    try:
-        loader = TextLoader(str(file_path), autodetect_encoding=True)
-        docs = loader.load()
-        for doc in docs:
-            doc.metadata['source'] = str(file_path.relative_to(staging_dir))
-            doc.metadata['category'] = 'yocto'
-            doc.metadata['file_type'] = file_path.suffix
-        documents.extend(docs)
-    except Exception as e:
-        print(f"Failed to load {file_path}: {e}", file=sys.stderr)
-
-if not documents:
-    print("No documents loaded")
-    sys.exit(1)
-
-text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
-texts = text_splitter.split_documents(documents)
-print(f"Split into {len(texts)} chunks")
-
-embeddings = OllamaEmbeddings(model='nomic-embed-text:latest')
-
-if vectorstore_exists:
-    vectorstore = FAISS.load_local(vectorstore_path, embeddings, allow_dangerous_deserialization=True)
-    old_count = vectorstore.index.ntotal
-    vectorstore.add_documents(texts)
-    print(f"Updated vectorstore: {old_count} -> {vectorstore.index.ntotal} vectors")
-else:
-    vectorstore = FAISS.from_documents(texts, embeddings)
-    print(f"Created vectorstore with {vectorstore.index.ntotal} vectors")
-
-vectorstore.save_local(vectorstore_path)
-print(f"Saved to {vectorstore_path}")
-PYTHON_SCRIPT
-
+                    # Cleanup
+                    rm -f /tmp/update_vectorstore_\${BUILD_NUMBER}.py
                 """
             }
         }
+
         
         stage('Refresh Index') {
             steps {
