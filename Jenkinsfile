@@ -24,7 +24,7 @@ properties([
 ])
 
 pipeline {
-    agent any
+    agent { label 'Yocto' }
     
     environment {
         RAG_BASE = "${params.RAG_BASE}"
