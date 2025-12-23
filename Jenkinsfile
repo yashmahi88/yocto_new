@@ -96,6 +96,32 @@ pipeline {
                 }
             }
         }
+
+        stage('Debug Python') {
+            steps {
+                sh """#!/bin/bash
+                    echo "=== Environment Check ==="
+                    echo "PYTHON_ENV: ${PYTHON_ENV}"
+                    echo "Does venv exist?"
+                    ls -la ${PYTHON_ENV}/bin/python3 || echo "NOT FOUND!"
+                    
+                    echo ""
+                    echo "=== System Python ==="
+                    which python3
+                    python3 --version
+                    
+                    echo ""
+                    echo "=== Venv Python (if exists) ==="
+                    ${PYTHON_ENV}/bin/python3 --version || echo "Venv python not executable"
+                    ${PYTHON_ENV}/bin/python3 -c "import sys; print(sys.path)" || echo "Can't run venv python"
+                    
+                    echo ""
+                    echo "=== Check langchain in venv ==="
+                    ${PYTHON_ENV}/bin/pip list | grep langchain || echo "Langchain NOT in venv"
+                """
+            }
+        }
+
         
         stage('Update Vectorstore') {
             steps {
