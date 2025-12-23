@@ -3,17 +3,17 @@ properties([
     pipelineTriggers([
         GenericTrigger(
             genericVariables: [
-                [key: 'commits_modified', value: '$.commits[*].modified[*]'],
-                [key: 'commits_added', value: '$.commits[*].added[*]'],
+                [key: 'allfiles', value: '$.commits[*].[modified[*],added[*]]', expressionType: 'JSONPath', defaultValue: ''],
                 [key: 'ref', value: '$.ref']
             ],
             causeString: 'Triggered by Yocto file changes',
             token: 'yocto-build-sync',
-            regexpFilterText: '$commits_modified $commits_added',
+            regexpFilterText: '$allfiles',
             regexpFilterExpression: '.*(\\.bb|\\.bbappend|\\.conf|layer\\.conf|\\.inc|\\.bbclass).*',
-            printContributedVariables: false,
-            printPostContent: false
+            printContributedVariables: true,
+            printPostContent: true
         )
+
     ]),
     parameters([
         string(name: 'RAG_BASE', defaultValue: '/home/azureuser/rag-system'),
